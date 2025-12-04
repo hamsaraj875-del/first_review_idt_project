@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Energy Conservation System</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background-color: black; color: white; }
+    .section { display: none; margin-top: 20px; }
+    button { padding: 8px 14px; font-size: 14px; margin: 6px; color: white; background-color: black; border: 1px solid white; }
+    input { margin: 5px; padding: 6px; background-color: black; color: black; border: 1px solid white; }
+    #topBar { display:flex; justify-content:space-between; align-items:center; }
+    #addThingsBtn { position: absolute; right: 20px; top: 18px; }
+    #resultsButtons { display:none; margin-top:12px; }
+    #graphHeader, #energyChart, #suggestionsBox, #notificationsBox { display:none; margin-top:12px; }
+    ul { padding-left: 18px; color: white; }
+    .small { font-size:13px; color: white; }
+    #timer { font-weight: bold; font-size: 18px; }
+    .notif { background: black; border-left:4px solid white; padding:8px; margin:6px 0; color: white; }
+  </style>
+</head>
+<body>
+
+  <style>
+  body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    background-color: black;
+    color: rgb(20, 245, 155);
+  }
+  button {
+    padding: 8px 14px;
+    font-size: 14px;
+    margin: 6px;
+    color: rgb(53, 248, 255);
+    background-color: #222;
+    border: 1px solid white;
+    cursor: pointer;
+  }
+  button:hover {
+    background-color: #444;
+  }
+  input {
+    margin: 5px;
+    padding: 6px;
+    background-color: #070c05;
+    color: rgb(232, 226, 226);
+    border: 1px solid white;
+  }
+  /* other styles remain the same */
+</style>
+
+<div id="topBar">
+  <h1>Home Energy Conservation System</h1>
+  <div>
+    <button id="addThingsTop" onclick="openSetup()">Add Things</button>
+    <button onclick="_clearAll()">Clear All Data</button>
+  </div>
+</div>
+
+
+  <!-- Setup / Add Appliances (hidden until Add Things clicked OR no stored appliances) -->
+  <div id="setupSection" class="section">
+    <h2>Enter Appliances in Your Home</h2>
+    <div>
+      <input type="text" id="applianceName" placeholder="Appliance Name (e.g., Fan)">
+      <input type="number" id="appliancePower" placeholder="Power (Watts)">
+      <button onclick="addAppliance()">Add Appliance</button>
+    </div>
+
+    <h3>Appliances Added:</h3>
+    <ul id="applianceList"></ul>
+
+    <h3>Enter Maximum Monthly Energy Limit (Wh)</h3>
+    <input type="number" id="maxLimit" placeholder="e.g., 5000">
+
+    <br><br>
+    <button onclick="saveSetup()">Save & Close</button>
+    <button onclick="closeSetup()">Cancel</button>
+  </div>
+
+  <!-- Monitoring -->
+  <div id="monitorSection" class="section">
+    <h2>Select Appliances Turned ON</h2>
+    <div id="monitorAppliances" class="small"></div>
+
+    <h3>Start Time</h3>
+    <input type="time" id="startTime">
+
+    <div style="margin-top:8px;">
+      <button onclick="startMonitoring()">Start</button>
+      <span style="margin-left:18px;">Timer Running: <span id="timer">00:00:00</span></span>
+    </div>
+
+    <div style="margin-top:8px;">
+      <button onclick="stopMonitoring()">Stop</button>
+    </div>
+
+    <div id="notifications" class="small"></div>
+  </div>
+
+  <!-- After STOP: result buttons (initially hidden) -->
+  <div id="resultsButtons">
+    <button onclick="showGraph()">Show Graph</button>
+    <button onclick="showSuggestionBox()">Show Suggestions</button>
+    <button onclick="showNotificationsBox()">Show Notifications History</button>
+  </div>
+
+  <hr>
+
+  <!-- Graph area (hidden until Show Graph clicked) -->
+  <h2 id="graphHeader">Energy Usage Graph (last 7 sessions)</h2>
+  <canvas id="energyChart" width="700" height="300"></canvas>
+
+  <!-- Suggestions area -->
+  <div id="suggestionsBox"></div>
+
+  <!-- Notifications history area -->
+  <div id="notificationsBox"></div>
+
+<script>
+/* -------------------------
+   Local state & storage keys
+   ------------------------- */
+const KEY_APPLIANCES = 'ecs_appliances_v1';
+const KEY_LIMIT = 'ecs_maxlimit_v1';
+const KEY_HISTORY = 'ecs_history_v1';
+const KEY_NOTIFS = 'ecs_notifications_v1';
+
+let appliances = [];
+let maxLimit = 0;
+let history = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+let notifications = JSON.parse(localStorage.getItem(KEY_NOTIFS) || '[]');
+
+let selectedAppliances = [];
+let secondsPassed = 0;
+let timerInterval = null;
+let notifyInterval = null;
+let limitCrossedThisSession = false;
+let currentSession = null;
+let chart = null;
+
+function formatHMS(sec) {
+  const h = String(Math.floor(sec/3600)).padStart(2,'0');
+  const m = String(Math.floor((sec%3600)/60)).padStart(2,'0');
+  const s = String(sec%60).padStart(2,'0');
+  return `${h}:${m}:${s}`;
+}
+function saveStorage(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+
+window.addEventListener('load', () => {
+  appliances = JSON.parse(localStorage.getItem(KEY_APPLIANCES) || '[]');
+  maxLimit = Number(localStorage.getItem(KEY_LIMIT) || 0);
+  history = JSON.parse(localStorage.getItem(KEY_HISTORY) || '[]');
+  notifications = JSON.parse(localStorage.getItem(KEY_NOTIFS) || '[]');
+
+  if (appliances.length === 0) openSetup();
+  else {
+    document.getElementById('monitorSection').style.display = 'block';
+    populateMonitorAppliances();
+  }
+  document.getElementById('resultsButtons').style.display = 'none';
+  document.getElementById('graphHeader').style.display = 'none';
+  document.getElementById('energyChart').style.display = 'none';
+  document.getElementById('suggestionsBox').style.display = 'none';
+  document.getElementById('notificationsBox').style.display = 'none';
+  populateSetupList();
+});
+
+function openSetup() { document.getElementById('setupSection').style.display = 'block'; populateSetupList(); }
+function closeSetup() { document.getElementById('setupSection').style.display = 'none'; if (appliances.length>0){document.getElementById('monitorSection').style.display='block'; populateMonitorAppliances();}}
+function addAppliance(){ const name=document.getElementById('applianceName').value.trim(); const power=Number(document.getElementById('appliancePower').value); if(!name||!power||power<=0){alert('Enter valid name and power');return;} appliances.push({name,power}); populateSetupList(); document.getElementById('applianceName').value=''; document.getElementById('appliancePower').value='';}
+function populateSetupList(){ const ul=document.getElementById('applianceList'); ul.innerHTML=''; appliances.forEach(a=>{ const li=document.createElement('li'); li.textContent=`${a.name} - ${a.power} W`; ul.appendChild(li);}); document.getElementById('maxLimit').value=maxLimit||'';}
+function saveSetup(){ const limitVal=Number(document.getElementById('maxLimit').value||0); if(appliances.length===0){alert('Add at least one appliance');return;} if(!limitVal||limitVal<=0){ if(!confirm('No positive monthly limit set. Continue?')) return;} maxLimit=limitVal; localStorage.setItem(KEY_APPLIANCES,JSON.stringify(appliances)); localStorage.setItem(KEY_LIMIT,String(maxLimit)); saveStorage(KEY_HISTORY,history); saveStorage(KEY_NOTIFS,notifications); document.getElementById('setupSection').style.display='none'; document.getElementById('monitorSection').style.display='block'; populateMonitorAppliances();}
+
+function populateMonitorAppliances(){ const div=document.getElementById('monitorAppliances'); div.innerHTML=''; if(appliances.length===0){ div.innerHTML='<em>No appliances found. Click "Add Things".</em>'; return;} appliances.forEach(a=>{ const label=document.createElement('label'); label.style.display='block'; label.innerHTML=`<input type="checkbox" value="${a.name}"> ${a.name} (${a.power} W)`; div.appendChild(label);});}
+
+function startMonitoring(){ selectedAppliances=Array.from(document.querySelectorAll('#monitorAppliances input:checked')).map(i=>i.value); if(selectedAppliances.length===0){alert('Select at least one appliance to start.');return;} secondsPassed=0; limitCrossedThisSession=false; currentSession={startTS:new Date().toISOString(), apps:selectedAppliances.slice(), breakdown:{}, energy:0}; selectedAppliances.forEach(name=>currentSession.breakdown[name]=0); document.getElementById('notifications').innerHTML=''; document.getElementById('resultsButtons').style.display='none'; document.getElementById('graphHeader').style.display='none'; document.getElementById('energyChart').style.display='none'; document.getElementById('suggestionsBox').style.display='none'; document.getElementById('notificationsBox').style.display='none'; timerInterval=setInterval(()=>{ secondsPassed++; document.getElementById('timer').innerText=formatHMS(secondsPassed); const totalWatts=selectedAppliances.reduce((s,name)=>{ const ap=appliances.find(x=>x.name===name); return s+(ap?ap.power:0);},0); const hours=secondsPassed/3600; const liveEnergy=totalWatts*hours; const totalHistoryEnergy=history.reduce((s,e)=>s+(e.energy||0),0); const totalSoFar=totalHistoryEnergy+liveEnergy; if(!limitCrossedThisSession && maxLimit>0 && totalSoFar>maxLimit){ const text=`⚠ Limit crossed! Cumulative consumption ${Math.round(totalSoFar)} Wh exceeds limit ${maxLimit} Wh.`; pushNotification(text); limitCrossedThisSession=true; notifyInterval=setInterval(()=>{ const t=`⚠ Reminder: you exceeded the limit (${new Date().toLocaleString()}) — check heavy devices.`; pushNotification(t); document.getElementById('notifications').insertAdjacentHTML('beforeend',`<div class="notif small">${t}</div>`); },5*60*1000);}},1000);}
+function pushNotification(text){ const entry={ts:new Date().toISOString(), text}; notifications.push(entry); saveStorage(KEY_NOTIFS,notifications); document.getElementById('notifications').insertAdjacentHTML('beforeend',`<div class="notif small">${text}</div>`);}
+function stopMonitoring(){ if(timerInterval){clearInterval(timerInterval); timerInterval=null;} if(notifyInterval){clearInterval(notifyInterval); notifyInterval=null;} const hours=secondsPassed/3600; let totalEnergy=0; const breakdown={}; selectedAppliances.forEach(name=>{ const ap=appliances.find(x=>x.name===name); const w=ap?ap.power:0; const wh=w*hours; breakdown[name]=Math.round(wh*100)/100; totalEnergy+=wh;}); currentSession.endTS=new Date().toISOString(); currentSession.energy=Math.round(totalEnergy*100)/100; currentSession.breakdown=breakdown; history.push({ts:currentSession.startTS, energy:currentSession.energy, breakdown:currentSession.breakdown}); if(history.length>7) history=history.slice(history.length-7); saveStorage(KEY_HISTORY,history); document.getElementById('resultsButtons').style.display='block'; document.getElementById('notifications').insertAdjacentHTML('beforeend',`<div class="small">Session recorded: ${currentSession.energy} Wh at ${new Date().toLocaleString()}</div>`); document.getElementById('timer').innerText='00:00:00'; secondsPassed=0;}
+function showGraph(){ document.getElementById('graphHeader').style.display='block'; document.getElementById('energyChart').style.display='block'; createGraphFromHistory();}
+function showSuggestionBox(){ document.getElementById('suggestionsBox').style.display='block'; const box=document.getElementById('suggestionsBox'); box.innerHTML=''; const last=history[history.length-1]; if(!last){box.innerHTML='<div class="small">No session recorded yet.</div>'; return;} const breakdown=last.breakdown||{}; let maxApp=null,maxVal=0; Object.keys(breakdown).forEach(k=>{ if(breakdown[k]>maxVal){ maxVal=breakdown[k]; maxApp=k;}}); const hour=new Date().getHours(); const isDay=(hour>=6 && hour<18); let suggestions=[]; if(isDay){ const lights=Object.keys(breakdown).filter(k=>/light|lamp/i.test(k)); if(lights.length) suggestions.push('It is daytime — consider turning OFF unnecessary lights.');} if(maxApp) suggestions.push(`Highest energy consumer this session: ${maxApp} (${breakdown[maxApp]} Wh). Consider using it less or replacing with efficient model.`); if(last.energy>(maxLimit||Infinity)) suggestions.push(`You exceeded your monthly limit (${maxLimit} Wh). Reduce heavy loads like ${maxApp}.`); else suggestions.push('Overall usage for this session looks OK.'); box.innerHTML='<h3>Suggestions</h3><ul class="small">'+suggestions.map(s=>`<li>${s}</li>`).join('')+'</ul>';}
+function showNotificationsBox(){ document.getElementById('notificationsBox').style.display='block'; const box=document.getElementById('notificationsBox'); box.innerHTML='<h3>Notifications History</h3>'; if(!notifications.length){box.innerHTML+='<div class="small">No notifications yet.</div>'; return;} notifications.slice().reverse().forEach(n=>{ box.innerHTML+=`<div class="notif small"><strong>${new Date(n.ts).toLocaleString()}</strong><br>${n.text}</div>`;});}
+function createGraphFromHistory(){ const ctx=document.getElementById('energyChart').getContext('2d'); if(chart){chart.destroy(); chart=null;} const labels=history.map(h=>new Date(h.ts).toLocaleString()); const data=history.map(h=>h.energy); chart=new Chart(ctx,{ type:'line', data:{ labels, datasets:[{label:'Energy (Wh)', data, borderWidth:2, tension:0.2, fill:false, borderColor:'blue'}]}, options:{responsive:true, scales:{y:{beginAtZero:true}}}});}
+function _clearAll(){ if(!confirm('Clear all data?')) return; localStorage.removeItem(KEY_APPLIANCES); localStorage.removeItem(KEY_LIMIT); localStorage.removeItem(KEY_HISTORY); localStorage.removeItem(KEY_NOTIFS); location.reload();}
+</script>
+
+</body>
+</html>
